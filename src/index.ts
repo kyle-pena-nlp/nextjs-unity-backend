@@ -6,17 +6,21 @@ import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { expressjwt, Request as JWTRequest } from "express-jwt";
 import jwt from "jsonwebtoken";
-
+import { PublicKey } from '@solana/web3.js';
+import nacl from 'tweetnacl';
 dotenv.config();
 
-const app = express();
-const prisma = new PrismaClient();
+
+
 const PORT = process.env.PORT || 3000;
 const ACCESS_TOKEN_SECRET = process.env.ACCESS_TOKEN_SECRET!!;
 const REFRESH_TOKEN_SECRET = process.env.REFRESH_TOKEN_SECRET!!;
 const JWT_TOKEN_ALGO = "HS256";
 const TOKEN_EXP = "5m"; // "10s" // - for demonstration purposes
 const REFRESH_TOKEN_EXP =  "1h"; // "5m"; // - for demonstration purposes
+
+const app = express();
+const prisma = new PrismaClient();
 
 // reference: https://github.com/wgzhaocv/auth/blob/315376ca41db8b18cb0fc852a8e732a03a2da8a0/src/jwt.ts#L41 
 
@@ -50,7 +54,7 @@ app.post('/add',
 
 
 // /register and /login will be replaced with tiplink stuff - this is not permanent, just POC
-app.post('/register', async (req, res) => {
+/*app.post('/register', async (req, res) => {
     console.log("/register called");
     const { email, password } = req.body;
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -65,24 +69,34 @@ app.post('/register', async (req, res) => {
     } catch (error) {
         res.status(400).json({ error: 'User already exists' });
     }
-});
+}); */
 
 // /register and /login will be replaced with tiplink stuff - this is not permanent, just POC
 app.post('/login', async (req, res) => {
     console.log("/login called");
-    const { email, password } = req.body;
-    const user = await prisma.user.findUnique({
-        where: { email }
-    });
+    
+    const { message, signature, publicKey } = req.body;
 
-    if (user && await bcrypt.compare(password, user.password)) {
-        const token = jwt.sign({ email }, ACCESS_TOKEN_SECRET, { expiresIn: TOKEN_EXP }); // "10m"
-        const refreshToken = jwt.sign({ email }, REFRESH_TOKEN_SECRET, { expiresIn: REFRESH_TOKEN_EXP }); // "1h"
-        res.json({ token, refreshToken });
-    } else {
-        res.status(401).json({ error: 'Invalid credentials' });
+    if (!message || !signature || !publicKey) {
+        return res.status(400);
+    }
+
+    try {
+        const sigIsValid = verifySignature(message, signature, publicKey);
+        if (sigIsValid) {
+            // TODO: create user on first login
+            const token = jwt.sign({ publicKey }, ACCESS_TOKEN_SECRET, { expiresIn: TOKEN_EXP }); // "10m"
+            const refreshToken = jwt.sign({ publicKey }, REFRESH_TOKEN_SECRET, { expiresIn: REFRESH_TOKEN_EXP }); // "1h"
+            return res.json({ token, refreshToken });
+        } else {
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
+    }
+    catch(e) {
+        return res.status(500);
     }
 });
+
 
 
 // refresh token endpoint
@@ -90,12 +104,12 @@ app.post('/token',
     expressjwt({ secret: REFRESH_TOKEN_SECRET, algorithms: [JWT_TOKEN_ALGO] }),
     async (req, res) => { 
         console.log("/token called");
-        const email = (req as any)?.auth?.email;
-        if (email == null) {
+        const publicKey = (req as any)?.auth?.publicKey;
+        if (publicKey == null) {
             return res.status(403);
         }
-        const token = jwt.sign({ email }, ACCESS_TOKEN_SECRET, { expiresIn: TOKEN_EXP }); // "10,"
-        const refreshToken = jwt.sign({ email }, REFRESH_TOKEN_SECRET, { expiresIn: REFRESH_TOKEN_EXP }); // "1h"
+        const token = jwt.sign({ publicKey }, ACCESS_TOKEN_SECRET, { expiresIn: TOKEN_EXP }); // "10,"
+        const refreshToken = jwt.sign({ publicKey }, REFRESH_TOKEN_SECRET, { expiresIn: REFRESH_TOKEN_EXP }); // "1h"
         return res.json({ token, refreshToken });
     }
 );
@@ -103,3 +117,12 @@ app.post('/token',
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });
+
+
+function verifySignature(message: string, signature: string, publicKeyString: string): boolean {
+    const publicKey = new PublicKey(publicKeyString).toBytes();
+    const encoder = new TextEncoder();
+    const encodedMessage = encoder.encode(message);
+    const encodedSignature = encoder.encode(signature);
+    return nacl.sign.detached.verify(encodedMessage, encodedSignature, publicKey);
+};
