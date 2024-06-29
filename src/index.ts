@@ -8,6 +8,7 @@ import { expressjwt, Request as JWTRequest } from "express-jwt";
 import jwt from "jsonwebtoken";
 import { PublicKey } from '@solana/web3.js';
 import nacl from 'tweetnacl';
+import { sign } from 'crypto';
 dotenv.config();
 
 
@@ -28,8 +29,7 @@ const prisma = new PrismaClient();
 
 // in prod this would be the address of the react front-end
 app.use(cors({
-    origin: ['http://localhost:3000', 'https://localhost:3001'],
-    credentials: true,
+    origin: ['http://localhost:3000', 'https://localhost:3001']
 }));
 
 app.use(express.json());
@@ -52,34 +52,29 @@ app.post('/add',
     }
 );
 
-
-// /register and /login will be replaced with tiplink stuff - this is not permanent, just POC
-/*app.post('/register', async (req, res) => {
-    console.log("/register called");
-    const { email, password } = req.body;
-    const hashedPassword = await bcrypt.hash(password, 10);
-    try {
-        const user = await prisma.user.create({
-            data: {
-                email,
-                password: hashedPassword
-            }
-        });
-        res.status(201).json(user);
-    } catch (error) {
-        res.status(400).json({ error: 'User already exists' });
-    }
-}); */
+function isLoginBody(body : any) : body is { message : string, signature : string, publicKey : string } {
+    return body != null &&
+            typeof body === 'object' && 
+            ('message' in body && typeof body['message'] === 'string') && 
+            ('signature' in body && typeof body['signature'] === 'string') &&
+            ('publicKey' in body && typeof body['publicKey'] === 'string');
+}
 
 // /register and /login will be replaced with tiplink stuff - this is not permanent, just POC
 app.post('/login', async (req, res) => {
     console.log("/login called");
-    
-    const { message, signature, publicKey } = req.body;
 
-    if (!message || !signature || !publicKey) {
+    if (!isLoginBody(req.body)) {
         return res.status(400);
     }
+
+    const { 
+        // original message
+        message, 
+        // base64 encoded signature
+        signature, 
+        // b58 address
+        publicKey } = req.body;
 
     try {
         const sigIsValid = verifySignature(message, signature, publicKey);
@@ -89,6 +84,7 @@ app.post('/login', async (req, res) => {
             const refreshToken = jwt.sign({ publicKey }, REFRESH_TOKEN_SECRET, { expiresIn: REFRESH_TOKEN_EXP }); // "1h"
             return res.json({ token, refreshToken });
         } else {
+            console.log("Could not verify");
             return res.status(401).json({ error: 'Invalid credentials' });
         }
     }
@@ -119,10 +115,18 @@ app.listen(PORT, () => {
 });
 
 
-function verifySignature(message: string, signature: string, publicKeyString: string): boolean {
-    const publicKey = new PublicKey(publicKeyString).toBytes();
-    const encoder = new TextEncoder();
-    const encodedMessage = encoder.encode(message);
-    const encodedSignature = encoder.encode(signature);
-    return nacl.sign.detached.verify(encodedMessage, encodedSignature, publicKey);
+function verifySignature(messageString: string, base64Signature: string, publicKeyString: string): boolean {
+
+    const uint8PublicKey = new PublicKey(publicKeyString).toBytes();
+    const uint8Message = new TextEncoder().encode(messageString);
+    const uint8Signature = new Uint8Array(Buffer.from(base64Signature, 'base64'));
+
+    try {
+        const result = nacl.sign.detached.verify(uint8Message, uint8Signature, uint8PublicKey);
+        return result;
+    }
+    catch(e) {
+        console.log("exception", e);
+        throw e;
+    }    
 };
