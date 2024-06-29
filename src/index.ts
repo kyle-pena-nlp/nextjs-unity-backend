@@ -15,6 +15,8 @@ const PORT = process.env.PORT || 3000;
 const ACCESS_TOKEN_SECRET = process.env.ACCESS_TOKEN_SECRET!!;
 const REFRESH_TOKEN_SECRET = process.env.REFRESH_TOKEN_SECRET!!;
 const JWT_TOKEN_ALGO = "HS256";
+const TOKEN_EXP = "5m"; // "10s" // - for demonstration purposes
+const REFRESH_TOKEN_EXP =  "1h"; // "5m"; // - for demonstration purposes
 
 // reference: https://github.com/wgzhaocv/auth/blob/315376ca41db8b18cb0fc852a8e732a03a2da8a0/src/jwt.ts#L41 
 
@@ -30,22 +32,26 @@ app.use(express.json());
 
 // apply JWT token authentication to all methods except /login, /register, /token 
 // /token has its own authentication for the refreshToken which is explicitly configured
-app.use(expressjwt({
+/*app.use(expressjwt({
     secret: ACCESS_TOKEN_SECRET,
     algorithms: [JWT_TOKEN_ALGO]
 }).unless({ path: ["/login", "/register", "/token"]}))
+*/
 
-
-app.get('/add', async (req, res) => {
-    console.log("Add invoked");
-    const { x, y } = req.body;
-    const result = x + y;
-    res.json({ result });
-});
+app.post('/add', 
+    expressjwt({ secret: ACCESS_TOKEN_SECRET, algorithms: [JWT_TOKEN_ALGO] }),
+    async (req, res) => {
+        console.log("/add called");
+        const { x, y } = req.body;
+        const result = x + y;
+        res.json({ result });
+    }
+);
 
 
 // /register and /login will be replaced with tiplink stuff - this is not permanent, just POC
 app.post('/register', async (req, res) => {
+    console.log("/register called");
     const { email, password } = req.body;
     const hashedPassword = await bcrypt.hash(password, 10);
     try {
@@ -63,14 +69,15 @@ app.post('/register', async (req, res) => {
 
 // /register and /login will be replaced with tiplink stuff - this is not permanent, just POC
 app.post('/login', async (req, res) => {
+    console.log("/login called");
     const { email, password } = req.body;
     const user = await prisma.user.findUnique({
         where: { email }
     });
 
     if (user && await bcrypt.compare(password, user.password)) {
-        const token = jwt.sign({ email }, ACCESS_TOKEN_SECRET, { expiresIn: "10m" });
-        const refreshToken = jwt.sign({ email }, REFRESH_TOKEN_SECRET, { expiresIn: "1h" });
+        const token = jwt.sign({ email }, ACCESS_TOKEN_SECRET, { expiresIn: TOKEN_EXP }); // "10m"
+        const refreshToken = jwt.sign({ email }, REFRESH_TOKEN_SECRET, { expiresIn: REFRESH_TOKEN_EXP }); // "1h"
         res.json({ token, refreshToken });
     } else {
         res.status(401).json({ error: 'Invalid credentials' });
@@ -82,12 +89,13 @@ app.post('/login', async (req, res) => {
 app.post('/token', 
     expressjwt({ secret: REFRESH_TOKEN_SECRET, algorithms: [JWT_TOKEN_ALGO] }),
     async (req, res) => { 
+        console.log("/token called");
         const email = (req as any)?.auth?.email;
         if (email == null) {
             return res.status(403);
         }
-        const token = jwt.sign({ email }, ACCESS_TOKEN_SECRET, { expiresIn: "10m" });
-        const refreshToken = jwt.sign({ email }, REFRESH_TOKEN_SECRET, { expiresIn: "1h" });
+        const token = jwt.sign({ email }, ACCESS_TOKEN_SECRET, { expiresIn: TOKEN_EXP }); // "10,"
+        const refreshToken = jwt.sign({ email }, REFRESH_TOKEN_SECRET, { expiresIn: REFRESH_TOKEN_EXP }); // "1h"
         return res.json({ token, refreshToken });
     }
 );
